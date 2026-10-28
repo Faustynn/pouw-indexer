@@ -1,8 +1,11 @@
+# Gitleaks: secret scanning (pre-commit hook + Security workflow).
+# Default rules are kept; add exceptions only after gitleaks actually flags a false positive.
+
 [extend]
 useDefault = true
 
 [allowlist]
-description = "Allowlist for files that arent secrets but may contain patterns that look like secrets"
+description = "Test fixtures: hashes/addresses that look like secrets but aren't"
 paths = [
   '''(^|/)mock_data/pouw-fixtures/(chain|events|meta)/''',
   '''(^|/)tests/fixtures/''',
