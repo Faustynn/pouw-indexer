@@ -1,0 +1,9 @@
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Allowlist for files that arent secrets but may contain patterns that look like secrets"
+paths = [
+  '''(^|/)mock_data/pouw-fixtures/(chain|events|meta)/''',
+  '''(^|/)tests/fixtures/''',
+]
