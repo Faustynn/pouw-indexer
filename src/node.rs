@@ -49,7 +49,14 @@ pub struct HttpNode {
 
 impl HttpNode {
     pub fn new(base_url: &str) -> Result<Self, NodeError> {
+        // the node answers in Borsh unless asked for JSON
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(
+            reqwest::header::ACCEPT,
+            reqwest::header::HeaderValue::from_static("application/json"),
+        );
         let client = reqwest::Client::builder()
+            .default_headers(headers)
             .connect_timeout(Duration::from_secs(5))
             .timeout(Duration::from_secs(60))
             .build()?;
