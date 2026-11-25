@@ -22,5 +22,9 @@ WORKDIR /app
 COPY tests/fixtures tests/fixtures
 USER 10001
 EXPOSE 8000
+# GET /manage/info shows these. pouw-deploy (make images) and docker.yml pass them
+# as build args; last, so a new build time does not invalidate the layers above
+ARG GIT_COMMIT=unknown GIT_BRANCH=unknown BUILD_TIME=unknown
+ENV GIT_COMMIT=$GIT_COMMIT GIT_BRANCH=$GIT_BRANCH BUILD_TIME=$BUILD_TIME
 ENTRYPOINT ["pouw-indexer"]
 CMD ["serve"]
