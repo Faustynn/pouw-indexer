@@ -492,7 +492,7 @@ mod tests {
 
     use super::*;
     use crate::error::NodeError;
-    use crate::event_source::{HttpEventSource, MemoryEventNode};
+    use crate::event_source::{EventPage, HttpEventSource, MemoryEventNode};
     use crate::fixtures::read_events;
 
     /// A recorded stream of the miner (it has proofs, lottery results and block events).
@@ -717,6 +717,90 @@ mod tests {
             oldest as i64
         );
         assert_eq!(store.event_cursor(&id("miner-1")).await.unwrap(), n);
+        assert!(m.render().contains("pouw_indexer_event_gaps_total 1"));
+    }
+
+    /// A node after a restart, as pouw-node numbers a run since pouw-node#144
+    /// (contracts/node-events.md, Node restart): its log holds only the events of the new
+    /// run, numbered from `base + 1`, and an `after` below `base` is expired (HTTP 410).
+    struct RestartedNode {
+        events: Vec<Event>,
+    }
+
+    impl RestartedNode {
+        fn new(base: u64, events: Vec<Event>) -> Self {
+            let events = events
+                .into_iter()
+                .zip(1..)
+                .map(|(mut event, n)| {
+                    event.seq = base + n;
+                    event
+                })
+                .collect();
+            Self { events }
+        }
+    }
+
+    impl EventSource for RestartedNode {
+        async fn fetch(
+            &mut self,
+            after: u64,
+            limit: u32,
+            _wait_ms: u32,
+        ) -> Result<EventPage, FetchError> {
+            let oldest = self.events[0].seq;
+            if after + 1 < oldest {
+                return Err(FetchError::CursorExpired { oldest_seq: oldest });
+            }
+            let events: Vec<Event> = self
+                .events
+                .iter()
+                .filter(|event| event.seq > after)
+                .take(limit as usize)
+                .cloned()
+                .collect();
+            let next = events.last().map_or(after, |event| event.seq);
+            Ok(EventPage { events, next })
+        }
+    }
+
+    /// pouw-node#142: after a node restart the indexer kept its cursor from the earlier run.
+    /// The node started again at seq 1, below that cursor, and the indexer stored no event
+    /// of it any more. A run now starts far above the earlier one, so the indexer meets the
+    /// restart as an expired cursor: it records the lost events as a gap and stores the
+    /// events of the new run.
+    #[sqlx::test]
+    async fn after_a_node_restart_the_new_run_is_stored_after_a_gap(pool: sqlx::PgPool) {
+        let store = Store::new(pool);
+        let events = read_events(MINER_1).unwrap();
+        let cfg = fast_cfg("miner-1");
+        let m = Metrics::new();
+
+        let mut first_run = MemoryEventNode::new(events[..50].to_vec());
+        ingest_until_caught_up(&store, &mut first_run, &cfg, &m)
+            .await
+            .unwrap();
+        assert_eq!(store.event_cursor(&id("miner-1")).await.unwrap(), 50);
+
+        // microseconds since the epoch at the restart, as the node numbers a run
+        let base: u64 = 1_795_000_000_000_000;
+        let mut second_run = RestartedNode::new(base, events[50..80].to_vec());
+        ingest_until_caught_up(&store, &mut second_run, &cfg, &m)
+            .await
+            .unwrap();
+
+        let gap: (i64, i64) =
+            sqlx::query_as("SELECT from_seq, to_seq FROM event_gaps WHERE node_id = 'miner-1'")
+                .fetch_one(store.pool())
+                .await
+                .unwrap();
+        assert_eq!(gap, (51, base as i64));
+        assert_eq!(count(&store, "SELECT count(*) FROM node_events").await, 80);
+        assert_eq!(
+            count(&store, "SELECT max(seq) FROM node_events").await,
+            base as i64 + 30
+        );
+        assert_eq!(store.event_cursor(&id("miner-1")).await.unwrap(), base + 30);
         assert!(m.render().contains("pouw_indexer_event_gaps_total 1"));
     }
 
